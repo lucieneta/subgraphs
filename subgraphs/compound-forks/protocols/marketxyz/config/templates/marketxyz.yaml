@@ -29,7 +29,7 @@ templates:
     kind: ethereum/contract
     network: {{ network }}
     source:
-      abi: Comptroller
+      abi: MarketComptroller
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.6
@@ -40,8 +40,8 @@ templates:
         - Market
         - Token
       abis:
-        - name: Comptroller
-          file: ./abis/Comptroller.json
+        - name: MarketComptroller
+          file: ./abis/marketxyz/MarketComptroller.json
         - name: CToken
           file: ./abis/marketxyz/CToken.json
         - name: ERC20
@@ -59,6 +59,8 @@ templates:
           handler: handleNewPriceOracle
         - event: ActionPaused(address,string,bool)
           handler: handleActionPaused
+        - event: WhitelistEnforcementChanged(bool)
+          handler: handleWhitelistEnforcementChanged
   - name: CToken
     kind: ethereum/contract
     network: {{ network }}

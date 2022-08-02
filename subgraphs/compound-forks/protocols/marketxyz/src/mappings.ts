@@ -104,7 +104,10 @@ import {
   getRewardsPerDay,
   RewardIntervalType,
 } from "./rewards";
-import { MarketComptroller } from "../../../generated/templates/CToken/MarketComptroller";
+import {
+  MarketComptroller,
+  WhitelistEnforcementChanged,
+} from "../../../generated/templates/CToken/MarketComptroller";
 import { getUsdPricePerToken } from "./prices";
 
 //////////////////////////////////
@@ -134,7 +137,7 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
   // create Comptroller template
   ComptrollerTemplate.create(event.params.pool.comptroller);
 
-  let troller = Comptroller.bind(event.params.pool.comptroller);
+  let troller = MarketComptroller.bind(event.params.pool.comptroller);
 
   // populate pool data
   let poolData = new ProtocolData(
@@ -164,6 +167,11 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
 
   pool.poolNumber = event.params.index.toString();
   pool.marketIDs = [];
+
+  pool.admin = troller.try_admin().value.toHexString();
+  pool.pendingAdmin = troller.try_pendingAdmin().value.toHexString();
+  pool.enforceWhitelist = troller.try_enforceWhitelist().value;
+  pool.closeFactor = troller.try_closeFactorMantissa().value.toBigDecimal();
 
   // set price oracle for pool entity
   let tryOracle = troller.try_oracle();
@@ -360,6 +368,21 @@ export function handleNewPriceOracle(event: NewPriceOracle): void {
     return;
   }
   pool.priceOracle = event.params.newPriceOracle.toHexString();
+  pool.save();
+}
+
+export function handleWhitelistEnforcementChanged(
+  event: WhitelistEnforcementChanged
+): void {
+  let pool = _FusePool.load(event.address.toHexString());
+  if (!pool) {
+    // best effort
+    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+      event.address.toHexString(),
+    ]);
+    return;
+  }
+  pool.enforceWhitelist = event.params.enforce;
   pool.save();
 }
 

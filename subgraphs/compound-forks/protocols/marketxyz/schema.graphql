@@ -1335,6 +1335,17 @@ type _FusePool @entity {
   " Pool creeation timestamp "
   createdAt: BigInt!
 
+  enforceWhitelist: Boolean!
+
+  " Pool admin "
+  admin: String!
+
+  " Pending pool admin "
+  pendingAdmin: String!
+
+  " Close factor for the pool "
+  closeFactor: BigDecimal!
+
   " Liquidation incentive for the pool "
   liquidationIncentive: BigDecimal!
 
