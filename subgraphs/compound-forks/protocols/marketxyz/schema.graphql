@@ -518,6 +518,9 @@ type Market @entity {
   " Smart contract address of the market "
   id: ID!
 
+  " Smart contract address of the market "
+  poolId: String
+
   " The protocol this pool belongs to "
   protocol: LendingProtocol!
 
@@ -1189,6 +1192,30 @@ type Repay @entity {
   amountUSD: BigDecimal!
 }
 
+type PoolRegistered @entity {
+  " { Transaction hash }-{ Log index } "
+  id: ID!
+
+  " Transaction hash of the transaction that emitted this event "
+  hash: String!
+
+  " Nonce of the transaction that emitted this event "
+  nonce: BigInt!
+
+  " Event log index. For transactions that don't emit event, create arbitrary index starting from 0 "
+  logIndex: Int!
+
+  " Block number of this event "
+  blockNumber: BigInt!
+
+  " Timestamp of this event "
+  timestamp: BigInt!
+
+  index: BigInt!
+
+  pool: _FusePool!
+}
+
 type Liquidate @entity {
   " { Transaction hash }-{ Log index } "
   id: ID!
@@ -1305,8 +1332,17 @@ type _FusePool @entity {
   " Price oracle for the "
   priceOracle: String!
 
+  " Pool creeation timestamp "
+  createdAt: BigInt!
+
   " Liquidation incentive for the pool "
   liquidationIncentive: BigDecimal!
+
+  totalValueLockedUSD: BigDecimal!
+
+  totalDepositBalanceUSD: BigDecimal!
+
+  totalBorrowBalanceUSD: BigDecimal!
 
   " IDs of all the markets in this fuse pool "
   marketIDs: [String!]!

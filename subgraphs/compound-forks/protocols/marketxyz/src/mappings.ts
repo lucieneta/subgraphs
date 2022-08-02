@@ -32,7 +32,7 @@ import {
   getOrCreateMarketDailySnapshot,
   getOrCreateMarketHourlySnapshot,
 } from "../../../src/mapping";
-import { PoolRegistered } from "../../../generated/PoolDirectory/PoolDirectory";
+import { PoolRegistered as PoolRegisteredEvent } from "../../../generated/PoolDirectory/PoolDirectory";
 import {
   ETH_ADDRESS,
   ETH_NAME,
@@ -95,6 +95,7 @@ import {
   Market,
   RewardToken,
   _FusePool,
+  PoolRegistered,
 } from "../../../generated/schema";
 import { PriceOracle } from "../../../generated/templates/CToken/PriceOracle";
 
@@ -129,7 +130,7 @@ export namespace RariFee {
 /////////////////////////////////
 
 // creates a new LendingProtocol for a new fuse "pool"
-export function handlePoolRegistered(event: PoolRegistered): void {
+export function handlePoolRegistered(event: PoolRegisteredEvent): void {
   // create Comptroller template
   ComptrollerTemplate.create(event.params.pool.comptroller);
 
@@ -155,6 +156,12 @@ export function handlePoolRegistered(event: PoolRegistered): void {
   let pool = new _FusePool(event.params.pool.comptroller.toHexString());
 
   pool.name = event.params.pool.name;
+  pool.createdAt = event.block.timestamp;
+
+  pool.totalDepositBalanceUSD = BIGDECIMAL_ZERO;
+  pool.totalValueLockedUSD = BIGDECIMAL_ZERO;
+  pool.totalBorrowBalanceUSD = BIGDECIMAL_ZERO;
+
   pool.poolNumber = event.params.index.toString();
   pool.marketIDs = [];
 
@@ -179,6 +186,22 @@ export function handlePoolRegistered(event: PoolRegistered): void {
       .div(mantissaFactorBD)
       .times(BIGDECIMAL_HUNDRED);
   }
+  let poolRegisteredId = event.transaction.hash
+    .toHexString()
+    .concat("-")
+    .concat(event.transactionLogIndex.toString());
+
+  const poolRegistered = new PoolRegistered(poolRegisteredId);
+
+  poolRegistered.hash = event.transaction.hash.toHexString();
+  poolRegistered.nonce = event.transaction.nonce;
+  poolRegistered.logIndex = event.transactionLogIndex.toI32();
+  poolRegistered.blockNumber = event.block.number;
+  poolRegistered.timestamp = event.block.timestamp;
+  poolRegistered.index = event.params.index;
+  poolRegistered.pool = pool.id;
+
+  poolRegistered.save();
   pool.save();
 }
 
@@ -283,6 +306,7 @@ export function handleMarketListed(event: MarketListed): void {
   // set liquidation incentive (fuse-specific)
   let market = Market.load(event.params.cToken.toHexString())!;
   market.liquidationPenalty = pool.liquidationIncentive;
+  market.poolId = pool.id;
   market.save();
 }
 
@@ -649,6 +673,12 @@ function updateMarket(
     return;
   }
 
+  let pool = _FusePool.load(market.poolId!);
+  if (!pool) {
+    log.warning("[updateMarket] Pool not found: {}", [market.poolId!]);
+    return;
+  }
+
   if (updateMarketPrices) {
     updateAllMarketPrices(comptroller, blockNumber);
   }
@@ -777,6 +807,28 @@ function updateMarket(
     .toBigDecimal()
     .div(exponentToBigDecimal(underlyingToken.decimals))
     .times(underlyingTokenPriceUSD);
+
+  pool.totalDepositBalanceUSD =
+    pool.totalDepositBalanceUSD.plus(underlyingSupplyUSD);
+  pool.totalValueLockedUSD = pool.totalValueLockedUSD.plus(underlyingSupplyUSD);
+
+  pool.totalBorrowBalanceUSD = pool.totalBorrowBalanceUSD.plus(
+    newTotalBorrow
+      .toBigDecimal()
+      .div(exponentToBigDecimal(underlyingToken.decimals))
+      .times(underlyingTokenPriceUSD)
+  );
+
+  pool.totalDepositBalanceUSD = pool.totalDepositBalanceUSD.minus(
+    market.totalDepositBalanceUSD
+  );
+  pool.totalValueLockedUSD = pool.totalValueLockedUSD.minus(
+    market.totalValueLockedUSD
+  );
+  pool.totalBorrowBalanceUSD = pool.totalBorrowBalanceUSD.minus(
+    market.totalBorrowBalanceUSD
+  );
+
   market.totalValueLockedUSD = underlyingSupplyUSD;
   market.totalDepositBalanceUSD = underlyingSupplyUSD;
 
@@ -854,7 +906,9 @@ function updateMarket(
     market.cumulativeProtocolSideRevenueUSD.plus(protocolSideRevenueUSDDelta);
   market.cumulativeSupplySideRevenueUSD =
     market.cumulativeSupplySideRevenueUSD.plus(supplySideRevenueUSDDelta);
+
   market.save();
+  pool.save();
 
   // update daily fields in marketDailySnapshot
   let dailySnapshot = getOrCreateMarketDailySnapshot(
@@ -918,6 +972,10 @@ function updateAllMarketPrices(
     if (!underlyingToken) {
       break;
     }
+    let pool = _FusePool.load(market.poolId!);
+    if (!pool) {
+      break;
+    }
 
     // update market price
     let customETHPrice = getUsdPricePerToken(
@@ -958,6 +1016,16 @@ function updateAllMarketPrices(
 
     market.inputTokenPriceUSD = underlyingTokenPriceUSD;
 
+    pool.totalDepositBalanceUSD = pool.totalDepositBalanceUSD.minus(
+      market.totalValueLockedUSD
+    );
+    pool.totalValueLockedUSD = pool.totalValueLockedUSD.minus(
+      market.totalDepositBalanceUSD
+    );
+    pool.totalBorrowBalanceUSD = pool.totalValueLockedUSD.minus(
+      market.totalBorrowBalanceUSD
+    );
+
     // update TVL, supplyUSD, borrowUSD
     market.totalDepositBalanceUSD = market.inputTokenBalance
       .toBigDecimal()
@@ -970,6 +1038,18 @@ function updateAllMarketPrices(
       .toBigDecimal()
       .div(exponentToBigDecimal(underlyingToken.decimals))
       .times(underlyingTokenPriceUSD);
+
+    pool.totalDepositBalanceUSD = pool.totalDepositBalanceUSD.plus(
+      market.totalValueLockedUSD
+    );
+    pool.totalValueLockedUSD = pool.totalValueLockedUSD.plus(
+      market.totalDepositBalanceUSD
+    );
+    pool.totalBorrowBalanceUSD = pool.totalValueLockedUSD.plus(
+      market.totalBorrowBalanceUSD
+    );
+
+    pool.save();
     market.save();
   }
 }
