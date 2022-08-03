@@ -20,6 +20,8 @@ dataSources:
           file: ./abis/marketxyz/PoolDirectory.json
         - name: Comptroller
           file: ./abis/Comptroller.json
+        - name: MarketComptroller
+          file: ./abis/marketxyz/MarketComptroller.json
       eventHandlers:
         - event: PoolRegistered(uint256,(string,address,address,uint256,uint256))
           handler: handlePoolRegistered
@@ -42,6 +44,8 @@ templates:
       abis:
         - name: MarketComptroller
           file: ./abis/marketxyz/MarketComptroller.json
+        - name: Comptroller
+          file: ./abis/Comptroller.json
         - name: CToken
           file: ./abis/marketxyz/CToken.json
         - name: ERC20
@@ -51,12 +55,18 @@ templates:
       eventHandlers:
         - event: MarketListed(address)
           handler: handleMarketListed
+        - event: NewPendingAdmin(address,address)
+          handler: handleNewPendingAdmin
+        - event: NewAdmin(address,address)
+          handler: handleNewAdmin
         - event: NewCollateralFactor(address,uint256,uint256)
           handler: handleNewCollateralFactor
         - event: NewLiquidationIncentive(uint256,uint256)
           handler: handleNewLiquidationIncentive
         - event: NewPriceOracle(address,address)
           handler: handleNewPriceOracle
+        - event: NewCloseFactor(uint256,uint256)
+          handler: handleNewCloseFactor
         - event: ActionPaused(address,string,bool)
           handler: handleActionPaused
         - event: WhitelistEnforcementChanged(bool)
@@ -80,6 +90,8 @@ templates:
       abis:
         - name: MarketComptroller
           file: ./abis/marketxyz/MarketComptroller.json
+        - name: Comptroller
+          file: ./abis/Comptroller.json
         - name: CToken
           file: ./abis/marketxyz/CToken.json
         - name: ERC20

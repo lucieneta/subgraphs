@@ -97,7 +97,10 @@ import {
   _FusePool,
   PoolRegistered,
 } from "../../../generated/schema";
-import { PriceOracle } from "../../../generated/templates/CToken/PriceOracle";
+import {
+  NewAdmin,
+  PriceOracle,
+} from "../../../generated/templates/CToken/PriceOracle";
 
 import {
   getOrCreateCircularBuffer,
@@ -106,6 +109,8 @@ import {
 } from "./rewards";
 import {
   MarketComptroller,
+  NewCloseFactor,
+  NewPendingAdmin,
   WhitelistEnforcementChanged,
 } from "../../../generated/templates/CToken/MarketComptroller";
 import { getUsdPricePerToken } from "./prices";
@@ -383,6 +388,45 @@ export function handleWhitelistEnforcementChanged(
     return;
   }
   pool.enforceWhitelist = event.params.enforce;
+  pool.save();
+}
+
+export function handleNewCloseFactor(event: NewCloseFactor): void {
+  let pool = _FusePool.load(event.address.toHexString());
+  if (!pool) {
+    // best effort
+    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+      event.address.toHexString(),
+    ]);
+    return;
+  }
+  pool.closeFactor = event.params.newCloseFactorMantissa.toBigDecimal();
+  pool.save();
+}
+
+export function handleNewPendingAdmin(event: NewPendingAdmin): void {
+  let pool = _FusePool.load(event.address.toHexString());
+  if (!pool) {
+    // best effort
+    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+      event.address.toHexString(),
+    ]);
+    return;
+  }
+  pool.pendingAdmin = event.params.newPendingAdmin.toHexString();
+  pool.save();
+}
+
+export function handleNewAdmin(event: NewAdmin): void {
+  let pool = _FusePool.load(event.address.toHexString());
+  if (!pool) {
+    // best effort
+    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+      event.address.toHexString(),
+    ]);
+    return;
+  }
+  pool.admin = event.params.newAdmin.toHexString();
   pool.save();
 }
 
