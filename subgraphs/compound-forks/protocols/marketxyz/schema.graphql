@@ -662,6 +662,10 @@ type Market @entity {
 
   ### Add-Ons ###
   _reserveFactor: BigDecimal!
+
+  fuseFee: BigDecimal!
+
+  adminFee: BigDecimal!
 }
 
 #################################
@@ -1213,7 +1217,7 @@ type PoolRegistered @entity {
 
   index: BigInt!
 
-  pool: _FusePool!
+  pool: MarketPool!
 }
 
 type Liquidate @entity {
@@ -1319,7 +1323,7 @@ type _ActorAccount @entity {
   id: ID!
 }
 
-type _FusePool @entity {
+type MarketPool @entity {
   " {Comptroller implementation} "
   id: ID!
 

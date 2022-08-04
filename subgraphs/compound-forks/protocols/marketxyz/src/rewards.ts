@@ -103,6 +103,9 @@ export function getRewardsPerDay(
   rewardRate: BigDecimal,
   rewardType: string
 ): BigDecimal {
+  if (rewardRate.equals(BIGDECIMAL_ZERO)) {
+    return BIGDECIMAL_ZERO;
+  }
   let circularBuffer = getOrCreateCircularBuffer();
 
   // Create entity for the current block

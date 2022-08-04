@@ -52,5 +52,5 @@ export const ETH_SYMBOL = "ETH";
 export const PROTOCOL_NAME = "Market";
 export const PROTOCOL_SLUG = "marketxyz";
 export const SUBGRAPH_VERSION = "1.0.16";
-export const SCHEMA_VERSION = "1.3.0";
+export const SCHEMA_VERSION = "v1";
 export const METHODOLOGY_VERSION = "1.0.0";

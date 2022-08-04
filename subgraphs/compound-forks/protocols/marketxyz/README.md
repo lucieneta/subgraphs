@@ -60,7 +60,7 @@ Count of Unique Addresses which have interacted with the protocol via any transa
 
 ## Fuse Specific Additions
 
-- There is a helper entity called `_FusePool` that tracks each fuse pool's market's, pool number, price oracle, liquidation incentive. This is needed in order to populate certain `Market` fields when a new market is added to an existing pool.
+- There is a helper entity called `MarketPool` that tracks each fuse pool's market's, pool number, price oracle, liquidation incentive. This is needed in order to populate certain `Market` fields when a new market is added to an existing pool.
 - Each market has additional `rates` added for the `Fuse Fee` and `Admin Fee`
   - `Fuse Fee` is the percentage of a market's accrued interest that is sent to the Rari Capital DAO
   - `Admin Fee` is the percentage of a market's accrued interest that is given to the admin of the pool.

@@ -12,7 +12,6 @@ import {
   _handleNewReserveFactor,
   _handleNewCollateralFactor,
   _handleNewPriceOracle,
-  _handleMarketListed,
   MarketListedData,
   TokenData,
   _handleNewLiquidationIncentive,
@@ -32,7 +31,10 @@ import {
   getOrCreateMarketDailySnapshot,
   getOrCreateMarketHourlySnapshot,
 } from "../../../src/mapping";
-import { PoolRegistered as PoolRegisteredEvent } from "../../../generated/PoolDirectory/PoolDirectory";
+import {
+  PoolDirectory,
+  PoolRegistered as PoolRegisteredEvent,
+} from "../../../generated/PoolDirectory/PoolDirectory";
 import {
   ETH_ADDRESS,
   ETH_NAME,
@@ -94,7 +96,7 @@ import {
   InterestRate,
   Market,
   RewardToken,
-  _FusePool,
+  MarketPool,
   PoolRegistered,
 } from "../../../generated/schema";
 import {
@@ -124,15 +126,6 @@ const FACTORY_CONTRACT = constants.poolDirectoryAddress;
 const PROTOCOL_NETWORK = constants.network;
 const ETH_PRICEORACLE = constants.ethPriceOracle;
 
-//////////////////////
-//// Fuse Enum(s) ////
-//////////////////////
-
-export namespace RariFee {
-  export const FUSE_FEE = "FUSE_FEE";
-  export const ADMIN_FEE = "ADMIN_FEE";
-}
-
 /////////////////////////////////
 //// Pool Directory Handlers ////
 /////////////////////////////////
@@ -146,9 +139,9 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
 
   // populate pool data
   let poolData = new ProtocolData(
-    Address.fromString(FACTORY_CONTRACT),
-    PROTOCOL_NAME,
-    PROTOCOL_SLUG,
+    event.params.pool.comptroller,
+    `${PROTOCOL_NAME}: Pool ${event.params.index}`,
+    `${PROTOCOL_SLUG}/pool/${event.params.index}`,
     SCHEMA_VERSION,
     SUBGRAPH_VERSION,
     METHODOLOGY_VERSION,
@@ -161,7 +154,7 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
   _getOrCreateProtocol(poolData);
 
   // create helper fuse pool entity
-  let pool = new _FusePool(event.params.pool.comptroller.toHexString());
+  let pool = new MarketPool(event.params.pool.comptroller.toHexString());
 
   pool.name = event.params.pool.name;
   pool.createdAt = event.block.timestamp;
@@ -226,6 +219,129 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
 // Source: https://docs.rari.capital/fuse
 
 // add a new market
+
+export function _handleMarketListed(
+  marketListedData: MarketListedData,
+  event: ethereum.Event
+): void {
+  let cTokenAddr = marketListedData.cToken.address;
+  let cToken = Token.load(cTokenAddr.toHexString());
+  if (cToken != null) {
+    return;
+  }
+  // this is a new cToken, a new underlying token, and a new market
+
+  let cTokenContract = CToken.bind(cTokenAddr);
+
+  //
+  // create cToken
+  //
+  cToken = new Token(cTokenAddr.toHexString());
+  cToken.name = marketListedData.cToken.name;
+  cToken.symbol = marketListedData.cToken.symbol;
+  cToken.decimals = marketListedData.cToken.decimals;
+  cToken.save();
+
+  //
+  // create underlying token
+  //
+  let underlyingToken = new Token(marketListedData.token.address.toHexString());
+  underlyingToken.name = marketListedData.token.name;
+  underlyingToken.symbol = marketListedData.token.symbol;
+  underlyingToken.decimals = marketListedData.token.decimals;
+  underlyingToken.save();
+
+  //
+  // create market
+  //
+  let market = new Market(cTokenAddr.toHexString());
+  market.name = cToken.name;
+  market.protocol = marketListedData.protocol.id;
+  market.inputToken = underlyingToken.id;
+  market.outputToken = cToken.id;
+
+  let supplyInterestRate = new InterestRate(
+    InterestRateSide.LENDER.concat("-")
+      .concat(InterestRateType.VARIABLE)
+      .concat("-")
+      .concat(market.id)
+  );
+  supplyInterestRate.side = InterestRateSide.LENDER;
+  supplyInterestRate.type = InterestRateType.VARIABLE;
+  supplyInterestRate.rate = BIGDECIMAL_ZERO;
+  supplyInterestRate.save();
+
+  let borrowInterestRate = new InterestRate(
+    InterestRateSide.BORROWER.concat("-")
+      .concat(InterestRateType.VARIABLE)
+      .concat("-")
+      .concat(market.id)
+  );
+  borrowInterestRate.side = InterestRateSide.BORROWER;
+  borrowInterestRate.type = InterestRateType.VARIABLE;
+  borrowInterestRate.rate = BIGDECIMAL_ZERO;
+  borrowInterestRate.save();
+
+  market.rates = [supplyInterestRate.id, borrowInterestRate.id];
+
+  market.isActive = true;
+  market.canUseAsCollateral = true;
+  market.canBorrowFrom = true;
+  market.liquidationPenalty = marketListedData.protocol._liquidationIncentive;
+  market._reserveFactor = marketListedData.cTokenReserveFactorMantissa
+    .toBigDecimal()
+    .div(mantissaFactorBD);
+
+  market.createdTimestamp = event.block.timestamp;
+  market.createdBlockNumber = event.block.number;
+
+  // add zero fields
+  market.maximumLTV = BIGDECIMAL_ZERO;
+  market.liquidationThreshold = BIGDECIMAL_ZERO;
+  market.totalValueLockedUSD = BIGDECIMAL_ZERO;
+  market.totalDepositBalanceUSD = BIGDECIMAL_ZERO;
+  market.cumulativeDepositUSD = BIGDECIMAL_ZERO;
+  market.totalBorrowBalanceUSD = BIGDECIMAL_ZERO;
+  market.cumulativeBorrowUSD = BIGDECIMAL_ZERO;
+  market.cumulativeLiquidateUSD = BIGDECIMAL_ZERO;
+  market.inputTokenBalance = BIGINT_ZERO;
+  market.inputTokenPriceUSD = BIGDECIMAL_ZERO;
+  market.outputTokenSupply = BIGINT_ZERO;
+  market.outputTokenPriceUSD = BIGDECIMAL_ZERO;
+  market.exchangeRate = BIGDECIMAL_ZERO;
+  market.cumulativeSupplySideRevenueUSD = BIGDECIMAL_ZERO;
+  market.cumulativeProtocolSideRevenueUSD = BIGDECIMAL_ZERO;
+  market.cumulativeTotalRevenueUSD = BIGDECIMAL_ZERO;
+  market.positionCount = 0;
+  market.openPositionCount = 0;
+  market.closedPositionCount = 0;
+  market.lendingPositionCount = 0;
+  market.borrowingPositionCount = 0;
+
+  market.fuseFee = cTokenContract
+    .try_fuseFeeMantissa()
+    .value.toBigDecimal()
+    .div(mantissaFactorBD)
+    .times(BIGDECIMAL_HUNDRED);
+
+  market.adminFee = cTokenContract
+    .try_adminFeeMantissa()
+    .value.toBigDecimal()
+    .div(mantissaFactorBD)
+    .times(BIGDECIMAL_HUNDRED);
+
+  market.save();
+
+  //
+  // update protocol
+  //
+  let marketIDs = marketListedData.protocol._marketIDs;
+  marketIDs.push(market.id);
+  marketListedData.protocol._marketIDs = marketIDs;
+  marketListedData.protocol.totalPoolCount++;
+  marketListedData.protocol.save();
+}
+
 export function handleMarketListed(event: MarketListed): void {
   CTokenTemplate.create(event.params.cToken);
   let cTokenContract = CToken.bind(event.params.cToken);
@@ -235,7 +351,7 @@ export function handleMarketListed(event: MarketListed): void {
   if (!protocol) {
     // best effort
     log.warning("[handleMarketListed] Protocol not found: {}", [
-      FACTORY_CONTRACT,
+      comptrollerAddr.value.toHexString(),
     ]);
     return;
   }
@@ -282,31 +398,15 @@ export function handleMarketListed(event: MarketListed): void {
     getOrElse(cTokenContract.try_reserveFactorMantissa(), BIGINT_ZERO)
   );
 
+  let market = new Market(cToken.address.toHexString());
+
   _handleMarketListed(marketData, event);
 
-  // fuse-specific: add fuseFees and adminFees
-
-  // get fuse fee - rari collects this (ie, protocol revenue)
-  let tryFuseFeeMantissa = cTokenContract.try_fuseFeeMantissa();
-  updateOrCreateRariFee(
-    tryFuseFeeMantissa.reverted ? BIGINT_ZERO : tryFuseFeeMantissa.value,
-    RariFee.FUSE_FEE,
-    event.params.cToken.toHexString()
-  );
-
-  // get admin fee - pool owners (admin) collect this (ie, protocol revenue)
-  let tryAdminFeeMantissa = cTokenContract.try_adminFeeMantissa();
-  updateOrCreateRariFee(
-    tryAdminFeeMantissa.reverted ? BIGINT_ZERO : tryAdminFeeMantissa.value,
-    RariFee.ADMIN_FEE,
-    event.params.cToken.toHexString()
-  );
-
   // add market ID to the fuse pool
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleMarketListed] FusePool not found: {}", [
+    log.warning("[handleMarketListed] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -317,9 +417,10 @@ export function handleMarketListed(event: MarketListed): void {
   pool.save();
 
   // set liquidation incentive (fuse-specific)
-  let market = Market.load(event.params.cToken.toHexString())!;
+
   market.liquidationPenalty = pool.liquidationIncentive;
   market.poolId = pool.id;
+
   market.save();
 }
 
@@ -338,10 +439,10 @@ export function handleNewLiquidationIncentive(
     .div(mantissaFactorBD)
     .minus(BIGDECIMAL_ONE)
     .times(BIGDECIMAL_HUNDRED);
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleNewLiquidationIncentive] FusePool not found: {}", [
+    log.warning("[handleNewLiquidationIncentive] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -364,10 +465,10 @@ export function handleNewLiquidationIncentive(
 }
 
 export function handleNewPriceOracle(event: NewPriceOracle): void {
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+    log.warning("[handleNewPriceOracle] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -379,10 +480,10 @@ export function handleNewPriceOracle(event: NewPriceOracle): void {
 export function handleWhitelistEnforcementChanged(
   event: WhitelistEnforcementChanged
 ): void {
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+    log.warning("[handleNewPriceOracle] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -392,10 +493,10 @@ export function handleWhitelistEnforcementChanged(
 }
 
 export function handleNewCloseFactor(event: NewCloseFactor): void {
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+    log.warning("[handleNewPriceOracle] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -405,10 +506,10 @@ export function handleNewCloseFactor(event: NewCloseFactor): void {
 }
 
 export function handleNewPendingAdmin(event: NewPendingAdmin): void {
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+    log.warning("[handleNewPriceOracle] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -418,10 +519,10 @@ export function handleNewPendingAdmin(event: NewPendingAdmin): void {
 }
 
 export function handleNewAdmin(event: NewAdmin): void {
-  let pool = _FusePool.load(event.address.toHexString());
+  let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleNewPriceOracle] FusePool not found: {}", [
+    log.warning("[handleNewPriceOracle] Pool not found: {}", [
       event.address.toHexString(),
     ]);
     return;
@@ -444,14 +545,15 @@ export function handleActionPaused(event: ActionPaused1): void {
 export function handleMint(event: Mint): void {
   let minter = event.params.minter;
   let mintAmount = event.params.mintAmount;
-  let factoryContract = Address.fromString(FACTORY_CONTRACT);
 
   let cTokenContract = CToken.bind(event.address);
+  let comptrollerAddr = cTokenContract.try_comptroller().value;
+
   let underlyingBalanceResult = cTokenContract.try_balanceOfUnderlying(
     event.params.minter
   );
   _handleMint(
-    factoryContract,
+    comptrollerAddr,
     minter,
     mintAmount,
     underlyingBalanceResult,
@@ -462,14 +564,15 @@ export function handleMint(event: Mint): void {
 export function handleRedeem(event: Redeem): void {
   let redeemer = event.params.redeemer;
   let redeemAmount = event.params.redeemAmount;
-  let factoryContract = Address.fromString(FACTORY_CONTRACT);
 
   let cTokenContract = CToken.bind(event.address);
+  let comptrollerAddr = cTokenContract.try_comptroller().value;
+
   let underlyingBalanceResult = cTokenContract.try_balanceOfUnderlying(
     event.params.redeemer
   );
   _handleRedeem(
-    factoryContract,
+    comptrollerAddr,
     redeemer,
     redeemAmount,
     underlyingBalanceResult,
@@ -480,14 +583,15 @@ export function handleRedeem(event: Redeem): void {
 export function handleBorrow(event: Borrow): void {
   let borrower = event.params.borrower;
   let borrowAmount = event.params.borrowAmount;
-  let factoryContract = Address.fromString(FACTORY_CONTRACT);
 
   let cTokenContract = CToken.bind(event.address);
+  let comptrollerAddr = cTokenContract.try_comptroller().value;
+
   let borrowBalanceResult = cTokenContract.try_borrowBalanceCurrent(
     event.params.borrower
   );
   _handleBorrow(
-    factoryContract,
+    comptrollerAddr,
     borrower,
     borrowAmount,
     borrowBalanceResult,
@@ -498,14 +602,15 @@ export function handleBorrow(event: Borrow): void {
 export function handleRepayBorrow(event: RepayBorrow): void {
   let payer = event.params.payer;
   let repayAmount = event.params.repayAmount;
-  let factoryContract = Address.fromString(FACTORY_CONTRACT);
 
   let cTokenContract = CToken.bind(event.address);
+  let comptrollerAddr = cTokenContract.try_comptroller().value;
+
   let borrowBalanceResult = cTokenContract.try_borrowBalanceCurrent(
     event.params.borrower
   );
   _handleRepayBorrow(
-    factoryContract,
+    comptrollerAddr,
     event.params.borrower,
     payer,
     repayAmount,
@@ -520,10 +625,12 @@ export function handleLiquidateBorrow(event: LiquidateBorrow): void {
   let borrower = event.params.borrower;
   let seizeTokens = event.params.seizeTokens;
   let repayAmount = event.params.repayAmount;
-  let factoryContract = Address.fromString(FACTORY_CONTRACT);
+
+  let cTokenContract = CToken.bind(event.address);
+  let comptrollerAddr = cTokenContract.try_comptroller().value;
 
   _handleLiquidateBorrow(
-    factoryContract,
+    comptrollerAddr,
     cTokenCollateral,
     liquidator,
     borrower,
@@ -546,10 +653,10 @@ export function handleAccrueInterest(event: AccrueInterest): void {
   }
 
   let cTokenContract = CToken.bind(marketAddress);
-  let pool = _FusePool.load(trollerAddr.toHexString());
+  let pool = MarketPool.load(trollerAddr.toHexString());
   if (!pool) {
     // best effort
-    log.warning("[handleAccrueInterest] FusePool not found: {}", [
+    log.warning("[handleAccrueInterest] Pool not found: {}", [
       trollerAddr.toHexString(),
     ]);
     return;
@@ -624,29 +731,29 @@ export function handleAccrueInterest(event: AccrueInterest): void {
     blocksPerDayBD,
     PROTOCOL_NETWORK == Network.ARBITRUM_ONE ? true : false // update all prices if network is arbitrum
   );
-  updateProtocol(Address.fromString(FACTORY_CONTRACT));
+  updateProtocol(trollerAddr);
 
-  snapshotFinancials(
-    Address.fromString(FACTORY_CONTRACT),
-    event.block.number,
-    event.block.timestamp
-  );
+  snapshotFinancials(trollerAddr, event.block.number, event.block.timestamp);
 }
 
 export function handleNewFuseFee(event: NewFuseFee): void {
-  updateOrCreateRariFee(
-    event.params.newFuseFeeMantissa,
-    RariFee.FUSE_FEE,
-    event.address.toHexString()
-  );
+  const market = Market.load(event.address.toHexString())!;
+
+  market.fuseFee = event.params.newFuseFeeMantissa
+    .toBigDecimal()
+    .div(mantissaFactorBD)
+    .times(BIGDECIMAL_HUNDRED);
+  market.save();
 }
 
 export function handleNewAdminFee(event: NewAdminFee): void {
-  updateOrCreateRariFee(
-    event.params.newAdminFeeMantissa,
-    RariFee.ADMIN_FEE,
-    event.address.toHexString()
-  );
+  const market = Market.load(event.address.toHexString())!;
+
+  market.adminFee = event.params.newAdminFeeMantissa
+    .toBigDecimal()
+    .div(mantissaFactorBD)
+    .times(BIGDECIMAL_HUNDRED);
+  market.save();
 }
 
 export function handleNewReserveFactor(event: NewReserveFactor): void {
@@ -673,43 +780,6 @@ function getComptrollerAddress(event: ethereum.Event): Address {
   }
 
   return tryComptroller.value;
-}
-
-// updates the rate or creates the rari fee (either fuse or admin fee)
-function updateOrCreateRariFee(
-  rateMantissa: BigInt,
-  rariFeeType: string,
-  marketID: string
-): void {
-  let rariFeeId =
-    InterestRateSide.BORROWER + "-" + rariFeeType + "-" + marketID;
-  let rariFee = InterestRate.load(rariFeeId);
-
-  // calculate fee rate
-  let rate = rateMantissa
-    .toBigDecimal()
-    .div(mantissaFactorBD)
-    .times(BIGDECIMAL_HUNDRED);
-
-  if (!rariFee) {
-    rariFee = new InterestRate(rariFeeId);
-    rariFee.side = InterestRateSide.BORROWER;
-    rariFee.type = InterestRateType.STABLE;
-
-    // add to market rates array
-    let market = Market.load(marketID);
-    if (!market) {
-      // best effort
-      return;
-    }
-    let rates = market.rates;
-    rates.push(rariFee.id);
-    market.rates = rates;
-    market.save();
-  }
-
-  rariFee.rate = rate;
-  rariFee.save();
 }
 
 // this function will "override" the updateMarket() function in ../../src/mapping.ts
@@ -740,7 +810,7 @@ function updateMarket(
     return;
   }
 
-  let pool = _FusePool.load(market.poolId!);
+  let pool = MarketPool.load(market.poolId!);
   if (!pool) {
     log.warning("[updateMarket] Pool not found: {}", [market.poolId!]);
     return;
@@ -785,11 +855,6 @@ function updateMarket(
       .toBigDecimal()
       .div(bdFactor);
     underlyingTokenPriceUSD = priceInEth.times(ethPriceUSD); // get price in USD
-
-    log.debug(
-      `Line 658, ETH price: ${ethPriceUSD}, Underlying Price: ${updateMarketData.getUnderlyingPriceResult.value}, Underlying Price USD: ${underlyingTokenPriceUSD}`,
-      []
-    );
   }
 
   underlyingToken.lastPriceUSD = underlyingTokenPriceUSD;
@@ -942,17 +1007,6 @@ function updateMarket(
 
   // calculate new interests accumulated
   // With fuse protocol revenue includes (reserve factor + fuse fee + admin fee)
-  let fuseFeeId =
-    InterestRateSide.BORROWER + "-" + RariFee.FUSE_FEE + "-" + marketID;
-  let fuseFee = InterestRate.load(fuseFeeId)!.rate.div(
-    exponentToBigDecimal(INT_TWO)
-  );
-
-  let adminFeeId =
-    InterestRateSide.BORROWER + "-" + RariFee.ADMIN_FEE + "-" + marketID;
-  let adminFee = InterestRate.load(adminFeeId)!.rate.div(
-    exponentToBigDecimal(INT_TWO)
-  );
 
   let interestAccumulatedUSD = interestAccumulatedMantissa
     .toBigDecimal()
@@ -960,7 +1014,7 @@ function updateMarket(
     .times(underlyingTokenPriceUSD);
 
   let protocolSideRevenueUSDDelta = interestAccumulatedUSD.times(
-    market._reserveFactor.plus(fuseFee).plus(adminFee)
+    market._reserveFactor.plus(market.fuseFee).plus(market.adminFee)
   );
   let supplySideRevenueUSDDelta = interestAccumulatedUSD.minus(
     protocolSideRevenueUSDDelta
@@ -1039,7 +1093,7 @@ function updateAllMarketPrices(
     if (!underlyingToken) {
       break;
     }
-    let pool = _FusePool.load(market.poolId!);
+    let pool = MarketPool.load(market.poolId!);
     if (!pool) {
       break;
     }
@@ -1123,10 +1177,12 @@ function updateAllMarketPrices(
 
 function getOrCreateProtocol(comptrollerAddr: Address): LendingProtocol {
   let comptroller = Comptroller.bind(comptrollerAddr);
+  let marketPool = MarketPool.load(comptrollerAddr.toHexString())!;
+
   let protocolData = new ProtocolData(
     comptrollerAddr,
-    PROTOCOL_NAME,
-    PROTOCOL_SLUG,
+    `${PROTOCOL_NAME}: Pool ${marketPool.poolNumber}`,
+    `${PROTOCOL_SLUG}/pool/${marketPool.poolNumber}`,
     SCHEMA_VERSION,
     SUBGRAPH_VERSION,
     METHODOLOGY_VERSION,
