@@ -36,7 +36,6 @@ import {
   PoolRegistered as PoolRegisteredEvent,
 } from "../../../generated/PoolDirectory/PoolDirectory";
 import {
-  ETH_ADDRESS,
   ETH_NAME,
   ETH_SYMBOL,
   getNetworkSpecificConstant,
@@ -122,10 +121,9 @@ import { getUsdPricePerToken } from "./prices";
 //////////////////////////////////
 
 let constants = getNetworkSpecificConstant();
-const FACTORY_CONTRACT = constants.poolDirectoryAddress;
-const PROTOCOL_NETWORK = constants.network;
-const ETH_PRICEORACLE = constants.ethPriceOracle;
 
+let PROTOCOL_NETWORK = constants.network;
+let ETH_ADDRESS = constants.ethAddress;
 /////////////////////////////////
 //// Pool Directory Handlers ////
 /////////////////////////////////
@@ -169,7 +167,6 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
   pool.admin = troller.try_admin().value.toHexString();
   pool.pendingAdmin = troller.try_pendingAdmin().value.toHexString();
   pool.enforceWhitelist = troller.try_enforceWhitelist().value;
-  pool.closeFactor = troller.try_closeFactorMantissa().value.toBigDecimal();
 
   // set price oracle for pool entity
   let tryOracle = troller.try_oracle();
@@ -188,6 +185,20 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
     );
   } else {
     pool.liquidationIncentive = tryLiquidationIncentive.value
+      .toBigDecimal()
+      .div(mantissaFactorBD)
+      .times(BIGDECIMAL_HUNDRED);
+  }
+  
+  // set liquidation incentive for pool entity
+  let tryCloseFactor = troller.try_closeFactorMantissa();
+  if (tryCloseFactor.reverted) {
+    log.warning(
+      "[getOrCreateProtocol] closeFactorMantissaResult reverted",
+      []
+    );
+  } else {
+    pool.closeFactor = tryCloseFactor.value
       .toBigDecimal()
       .div(mantissaFactorBD)
       .times(BIGDECIMAL_HUNDRED);
@@ -288,7 +299,7 @@ export function _handleMarketListed(
   market.canUseAsCollateral = true;
   market.canBorrowFrom = true;
   market.liquidationPenalty = marketListedData.protocol._liquidationIncentive;
-  market._reserveFactor = marketListedData.cTokenReserveFactorMantissa
+  market.reserveFactor = marketListedData.cTokenReserveFactorMantissa
     .toBigDecimal()
     .div(mantissaFactorBD);
 
@@ -329,7 +340,6 @@ export function _handleMarketListed(
     .value.toBigDecimal()
     .div(mantissaFactorBD)
     .times(BIGDECIMAL_HUNDRED);
-
   market.save();
 
   //
@@ -729,7 +739,7 @@ export function handleAccrueInterest(event: AccrueInterest): void {
     event.block.timestamp,
     trollerAddr,
     blocksPerDayBD,
-    PROTOCOL_NETWORK == Network.ARBITRUM_ONE ? true : false // update all prices if network is arbitrum
+    false
   );
   updateProtocol(trollerAddr);
 
@@ -1014,7 +1024,7 @@ function updateMarket(
     .times(underlyingTokenPriceUSD);
 
   let protocolSideRevenueUSDDelta = interestAccumulatedUSD.times(
-    market._reserveFactor.plus(market.fuseFee).plus(market.adminFee)
+    market.reserveFactor.plus(market.fuseFee).plus(market.adminFee)
   );
   let supplySideRevenueUSDDelta = interestAccumulatedUSD.minus(
     protocolSideRevenueUSDDelta
@@ -1103,6 +1113,8 @@ function updateAllMarketPrices(
       Address.fromString(ETH_ADDRESS),
       oracleAddr
     );
+    log.info("[ETH price] {}", [customETHPrice.usdPrice.toString()]);
+
     let ethPriceUSD = customETHPrice.usdPrice.div(
       customETHPrice.decimalsBaseTen
     );

@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@graphprotocol/graph-ts": "^0.27.0",
-    "minimist": "^1.2.6"
+    "minimist": "^1.2.6",
+    "source-map-support": "^0.5.21"
   },
   "devDependencies": {
     "@graphprotocol/graph-cli": "^0.30.1",

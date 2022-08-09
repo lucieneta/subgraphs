@@ -303,7 +303,7 @@ export function _handleMarketListed(
   market.canUseAsCollateral = true;
   market.canBorrowFrom = true;
   market.liquidationPenalty = marketListedData.protocol._liquidationIncentive;
-  market._reserveFactor = marketListedData.cTokenReserveFactorMantissa
+  market.reserveFactor = marketListedData.cTokenReserveFactorMantissa
     .toBigDecimal()
     .div(mantissaFactorBD);
 
@@ -1004,7 +1004,7 @@ export function _handleNewReserveFactor(
   let reserveFactor = newReserveFactorMantissa
     .toBigDecimal()
     .div(mantissaFactorBD);
-  market._reserveFactor = reserveFactor;
+  market.reserveFactor = reserveFactor;
   market.save();
 }
 
@@ -1509,7 +1509,7 @@ export function updateMarket(
     .div(exponentToBigDecimal(underlyingToken.decimals))
     .times(underlyingTokenPriceUSD);
   let protocolSideRevenueUSDDelta = interestAccumulatedUSD.times(
-    market._reserveFactor
+    market.reserveFactor
   );
   let supplySideRevenueUSDDelta = interestAccumulatedUSD.minus(
     protocolSideRevenueUSDDelta

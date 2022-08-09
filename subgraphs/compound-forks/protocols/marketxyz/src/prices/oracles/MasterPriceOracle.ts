@@ -1,8 +1,10 @@
 import { Address, BigInt } from "@graphprotocol/graph-ts";
 import { CustomPriceType } from "../common/types";
 import { MasterPriceOracle } from "../../../../../generated/templates/CToken/MasterPriceOracle";
-import { MASTER_ORACLE_V2, USDC_ADDR } from "../config/polygon";
 import { getTokenDecimals } from "../common/utils";
+import { getNetworkSpecificConstant } from "../../constants";
+
+const usdcAddress = getNetworkSpecificConstant().usdcAddress;
 
 export function getTokenPriceFromMasterOracle(
   tokenAddr: Address,
@@ -10,7 +12,7 @@ export function getTokenPriceFromMasterOracle(
 ): CustomPriceType {
   const masterOracle = MasterPriceOracle.bind(oracle);
 
-  let usdcPriceInEth = masterOracle.try_price(Address.fromString(USDC_ADDR));
+  let usdcPriceInEth = masterOracle.try_price(Address.fromString(usdcAddress));
   let tokenPriceInEth = masterOracle.try_price(tokenAddr);
   let decimals = getTokenDecimals(tokenAddr);
 
