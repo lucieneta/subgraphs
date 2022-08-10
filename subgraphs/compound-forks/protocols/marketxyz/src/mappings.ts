@@ -189,14 +189,11 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
       .div(mantissaFactorBD)
       .times(BIGDECIMAL_HUNDRED);
   }
-  
+
   // set liquidation incentive for pool entity
   let tryCloseFactor = troller.try_closeFactorMantissa();
   if (tryCloseFactor.reverted) {
-    log.warning(
-      "[getOrCreateProtocol] closeFactorMantissaResult reverted",
-      []
-    );
+    log.warning("[getOrCreateProtocol] closeFactorMantissaResult reverted", []);
   } else {
     pool.closeFactor = tryCloseFactor.value
       .toBigDecimal()
@@ -511,7 +508,10 @@ export function handleNewCloseFactor(event: NewCloseFactor): void {
     ]);
     return;
   }
-  pool.closeFactor = event.params.newCloseFactorMantissa.toBigDecimal();
+  pool.closeFactor = event.params.newCloseFactorMantissa
+    .toBigDecimal()
+    .div(mantissaFactorBD)
+    .times(BIGDECIMAL_HUNDRED);
   pool.save();
 }
 
