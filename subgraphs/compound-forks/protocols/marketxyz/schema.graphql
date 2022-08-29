@@ -326,6 +326,8 @@ type LendingProtocol implements Protocol @entity {
   _marketIDs: [ID!]!
 
   _liquidationIncentive: BigDecimal!
+
+  updatedAt: BigInt!
 }
 
 ###############################
@@ -438,6 +440,9 @@ type UsageMetricsHourlySnapshot @entity {
 type FinancialsDailySnapshot @entity {
   " ID is # of days since Unix epoch time "
   id: ID!
+
+  " Day of the snapshot"
+  day: BigInt!
 
   " Protocol this snapshot is associated with "
   protocol: LendingProtocol!
@@ -556,6 +561,10 @@ type Market @entity {
 
   ##### Quantitative Data #####
 
+  supplyAPY: BigDecimal!
+
+  borrowAPR: BigDecimal!
+
   " All interest rates / fees allowed in the market. Interest rate should be in APY percentage "
   rates: [InterestRate!]!
 
@@ -666,6 +675,9 @@ type Market @entity {
   fuseFee: BigDecimal!
 
   adminFee: BigDecimal!
+
+  " Last updated timestamp "
+  updatedAt: BigInt!
 }
 
 #################################
@@ -1361,4 +1373,7 @@ type MarketPool @entity {
 
   " IDs of all the markets in this fuse pool "
   marketIDs: [String!]!
+
+  " Last updated timestamp "
+  updatedAt: BigInt!
 }

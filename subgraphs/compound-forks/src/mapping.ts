@@ -72,7 +72,8 @@ export class ProtocolData {
     public readonly methodologyVersion: string,
     public readonly network: string,
     public readonly liquidationIncentiveMantissaResult: ethereum.CallResult<BigInt>,
-    public readonly oracleResult: ethereum.CallResult<Address>
+    public readonly oracleResult: ethereum.CallResult<Address>,
+    public readonly timestamp: BigInt
   ) {}
 }
 
@@ -111,7 +112,8 @@ export class UpdateMarketData {
 
 export function _handleNewCollateralFactor(
   marketID: string,
-  newCollateralFactorMantissa: BigInt
+  newCollateralFactorMantissa: BigInt,
+  timestamp: BigInt
 ): void {
   let market = Market.load(marketID);
   if (market == null) {
@@ -133,6 +135,7 @@ export function _handleNewCollateralFactor(
     market.canUseAsCollateral = true;
   }
 
+  market.updatedAt = timestamp;
   market.save();
 }
 
@@ -173,7 +176,8 @@ export function _handleNewPriceOracle(
 export function _handleActionPaused(
   marketID: string,
   action: string,
-  pauseState: boolean
+  pauseState: boolean,
+  timestamp: BigInt
 ): void {
   let market = Market.load(marketID);
   if (!market) {
@@ -182,11 +186,12 @@ export function _handleActionPaused(
   }
 
   if (action == "Mint") {
-    market.isActive = pauseState;
+    market.isActive = !pauseState;
   } else if (action == "Borrow") {
-    market.canBorrowFrom = pauseState;
+    market.canBorrowFrom = !pauseState;
   }
 
+  market.updatedAt = timestamp;
   market.save();
 }
 
@@ -332,6 +337,7 @@ export function _handleMarketListed(
   market.closedPositionCount = 0;
   market.lendingPositionCount = 0;
   market.borrowingPositionCount = 0;
+  market.updatedAt = event.block.timestamp;
 
   market.save();
 
@@ -431,6 +437,7 @@ export function _handleMint(
   deposit.save();
 
   market.cumulativeDepositUSD = market.cumulativeDepositUSD.plus(depositUSD);
+  market.updatedAt = event.block.timestamp;
   market.save();
 
   updateMarketSnapshots(
@@ -713,7 +720,9 @@ export function _handleRepayBorrow(
     .toHexString()
     .concat("-")
     .concat(event.transactionLogIndex.toString());
+
   let repay = new Repay(repayID);
+
   repay.hash = event.transaction.hash.toHexString();
   repay.nonce = event.transaction.nonce;
   repay.logIndex = event.transactionLogIndex.toI32();
@@ -907,6 +916,7 @@ export function _handleLiquidateBorrow(
 
   liquidatedCTokenMarket.cumulativeLiquidateUSD =
     liquidatedCTokenMarket.cumulativeLiquidateUSD.plus(gainUSD);
+  liquidatedCTokenMarket.updatedAt = event.block.timestamp;
   liquidatedCTokenMarket.save();
 
   updateMarketSnapshots(
@@ -983,7 +993,7 @@ export function _handleAccrueInterest(
     event.block.number,
     event.block.timestamp
   );
-  updateProtocol(comptrollerAddr);
+  updateProtocol(comptrollerAddr, event.block.timestamp);
 
   snapshotFinancials(
     comptrollerAddr,
@@ -994,7 +1004,8 @@ export function _handleAccrueInterest(
 
 export function _handleNewReserveFactor(
   marketID: string,
-  newReserveFactorMantissa: BigInt
+  newReserveFactorMantissa: BigInt,
+  timestamp: BigInt
 ): void {
   let market = Market.load(marketID);
   if (market == null) {
@@ -1005,6 +1016,7 @@ export function _handleNewReserveFactor(
     .toBigDecimal()
     .div(mantissaFactorBD);
   market.reserveFactor = reserveFactor;
+  market.updatedAt = timestamp;
   market.save();
 }
 
@@ -1031,10 +1043,14 @@ export function snapshotFinancials(
     );
     return;
   }
-  let snapshotID = (blockTimestamp.toI32() / SECONDS_PER_DAY).toString();
+  let snapshotID = getMarketDailySnapshotID(
+    protocol.id,
+    blockTimestamp.toI32()
+  );
   let snapshot = new FinancialsDailySnapshot(snapshotID);
 
   snapshot.protocol = protocol.id;
+  snapshot.day = BigInt.fromI32(blockTimestamp.toI32() / SECONDS_PER_DAY);
   snapshot.totalValueLockedUSD = protocol.totalValueLockedUSD;
   snapshot.totalDepositBalanceUSD = protocol.totalDepositBalanceUSD;
   snapshot.totalBorrowBalanceUSD = protocol.totalBorrowBalanceUSD;
@@ -1135,7 +1151,9 @@ function snapshotUsage(
   //
   // daily snapshot
   //
-  let dailySnapshotID = (blockTimestamp.toI32() / SECONDS_PER_DAY).toString();
+  let dailySnapshotID = (
+    parseInt(blockTimestamp.toString()) / SECONDS_PER_DAY
+  ).toString();
   let dailySnapshot = UsageMetricsDailySnapshot.load(dailySnapshotID);
   if (!dailySnapshot) {
     dailySnapshot = new UsageMetricsDailySnapshot(dailySnapshotID);
@@ -1234,7 +1252,9 @@ function snapshotUsage(
   //
   // hourly snapshot
   //
-  let hourlySnapshotID = (blockTimestamp.toI32() / SECONDS_PER_HOUR).toString();
+  let hourlySnapshotID = (
+    parseInt(blockTimestamp.toString()) / SECONDS_PER_HOUR
+  ).toString();
   let hourlySnapshot = UsageMetricsHourlySnapshot.load(hourlySnapshotID);
   if (!hourlySnapshot) {
     hourlySnapshot = new UsageMetricsHourlySnapshot(hourlySnapshotID);
@@ -1486,7 +1506,8 @@ export function updateMarket(
       convertRatePerUnitToAPY(
         updateMarketData.supplyRateResult.value,
         updateMarketData.unitPerYear
-      )
+      ),
+      blockTimestamp
     );
   }
 
@@ -1500,7 +1521,8 @@ export function updateMarket(
       convertRatePerUnitToAPY(
         updateMarketData.borrowRateResult.value,
         updateMarketData.unitPerYear
-      )
+      ),
+      blockTimestamp
     );
   }
 
@@ -1522,6 +1544,8 @@ export function updateMarket(
     market.cumulativeProtocolSideRevenueUSD.plus(protocolSideRevenueUSDDelta);
   market.cumulativeSupplySideRevenueUSD =
     market.cumulativeSupplySideRevenueUSD.plus(supplySideRevenueUSDDelta);
+  market.updatedAt = blockTimestamp;
+
   market.save();
 
   // update daily fields in marketDailySnapshot
@@ -1556,7 +1580,10 @@ export function updateMarket(
   hourlySnapshot.save();
 }
 
-export function updateProtocol(comptrollerAddr: Address): void {
+export function updateProtocol(
+  comptrollerAddr: Address,
+  blockTimestamp: BigInt
+): void {
   let protocol = LendingProtocol.load(comptrollerAddr.toHexString());
   if (!protocol) {
     log.error(
@@ -1619,6 +1646,8 @@ export function updateProtocol(comptrollerAddr: Address): void {
   protocol.cumulativeTotalRevenueUSD = cumulativeTotalRevenueUSD;
   protocol.cumulativeProtocolSideRevenueUSD = cumulativeProtocolSideRevenueUSD;
   protocol.cumulativeSupplySideRevenueUSD = cumulativeSupplySideRevenueUSD;
+  protocol.updatedAt = blockTimestamp;
+
   protocol.save();
 }
 
@@ -1663,6 +1692,7 @@ export function _getOrCreateProtocol(
     protocol.openPositionCount = 0;
     protocol.cumulativePositionCount = 0;
     protocol._marketIDs = [];
+    protocol.updatedAt = protocolData.timestamp;
 
     // set liquidation incentive
     if (protocolData.liquidationIncentiveMantissaResult.reverted) {
@@ -1712,22 +1742,25 @@ function createAccount(accountID: string): Account {
 
 export function setSupplyInterestRate(
   marketID: string,
-  rate: BigDecimal
+  rate: BigDecimal,
+  timestamp: BigInt
 ): void {
-  setInterestRate(marketID, rate, true);
+  setInterestRate(marketID, rate, true, timestamp);
 }
 
 export function setBorrowInterestRate(
   marketID: string,
-  rate: BigDecimal
+  rate: BigDecimal,
+  timestamp: BigInt
 ): void {
-  setInterestRate(marketID, rate, false);
+  setInterestRate(marketID, rate, false, timestamp);
 }
 
 function setInterestRate(
   marketID: string,
   rate: BigDecimal,
-  isSupply: boolean
+  isSupply: boolean,
+  timestamp: BigInt
 ): void {
   let market = Market.load(marketID);
   if (!market) {
@@ -1764,6 +1797,7 @@ function setInterestRate(
     borrowInterestRate.save();
   }
   market.rates = [supplyInterestRateID, borrowInterestRateID];
+  market.updatedAt = timestamp;
   market.save();
 }
 
@@ -1772,9 +1806,7 @@ export function getOrCreateMarketDailySnapshot(
   blockTimestamp: BigInt,
   blockNumber: BigInt
 ): MarketDailySnapshot {
-  let snapshotID = `${market.id}-${(
-    blockTimestamp.toI32() / SECONDS_PER_DAY
-  ).toString()}`;
+  let snapshotID = getMarketDailySnapshotID(market.id, blockTimestamp.toI32());
   let snapshot = MarketDailySnapshot.load(snapshotID);
   if (!snapshot) {
     snapshot = new MarketDailySnapshot(snapshotID);
@@ -1795,7 +1827,7 @@ export function getOrCreateMarketDailySnapshot(
 
   snapshot.rates = getSnapshotRates(
     market.rates,
-    (blockTimestamp.toI32() / SECONDS_PER_DAY).toString()
+    (parseInt(blockTimestamp.toString()) / SECONDS_PER_DAY).toString()
   );
   snapshot.totalValueLockedUSD = market.totalValueLockedUSD;
   snapshot.cumulativeSupplySideRevenueUSD =
@@ -1827,9 +1859,7 @@ export function getOrCreateMarketHourlySnapshot(
   blockTimestamp: BigInt,
   blockNumber: BigInt
 ): MarketHourlySnapshot {
-  let snapshotID = `${market.id}-${(
-    blockTimestamp.toI32() / SECONDS_PER_HOUR
-  ).toString()}`;
+  let snapshotID = getMarketHourlySnapshotID(market.id, blockTimestamp.toI32());
   let snapshot = MarketHourlySnapshot.load(snapshotID);
   if (!snapshot) {
     snapshot = new MarketHourlySnapshot(snapshotID);
@@ -1852,7 +1882,7 @@ export function getOrCreateMarketHourlySnapshot(
   snapshot.timestamp = blockTimestamp;
   snapshot.rates = getSnapshotRates(
     market.rates,
-    (blockTimestamp.toI32() / SECONDS_PER_HOUR).toString()
+    (parseInt(blockTimestamp.toString()) / SECONDS_PER_HOUR).toString()
   );
   snapshot.totalValueLockedUSD = market.totalValueLockedUSD;
   snapshot.cumulativeSupplySideRevenueUSD =
@@ -1982,6 +2012,7 @@ function addPosition(
     } else if (eventType == EventType.Borrow) {
       market.borrowingPositionCount += 1;
     }
+    market.updatedAt = event.block.timestamp;
     market.save();
 
     //
@@ -2098,6 +2129,7 @@ function subtractPosition(
     //
     market.openPositionCount -= 1;
     market.closedPositionCount += 1;
+    market.updatedAt = event.block.timestamp;
     market.save();
 
     //

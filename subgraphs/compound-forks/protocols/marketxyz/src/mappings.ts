@@ -145,7 +145,8 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
     METHODOLOGY_VERSION,
     PROTOCOL_NETWORK,
     troller.try_liquidationIncentiveMantissa(),
-    troller.try_oracle()
+    troller.try_oracle(),
+    event.block.timestamp
   );
 
   // only needed to create the new pool (ie, pool's Comptroller implementation)
@@ -216,6 +217,8 @@ export function handlePoolRegistered(event: PoolRegisteredEvent): void {
   poolRegistered.pool = pool.id;
 
   poolRegistered.save();
+
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 }
 
@@ -291,6 +294,8 @@ export function _handleMarketListed(
   borrowInterestRate.save();
 
   market.rates = [supplyInterestRate.id, borrowInterestRate.id];
+  market.supplyAPY = BIGDECIMAL_ZERO;
+  market.borrowAPR = BIGDECIMAL_ZERO;
 
   market.isActive = true;
   market.canUseAsCollateral = true;
@@ -337,6 +342,8 @@ export function _handleMarketListed(
     .value.toBigDecimal()
     .div(mantissaFactorBD)
     .times(BIGDECIMAL_HUNDRED);
+
+  market.updatedAt = event.block.timestamp;
   market.save();
 
   //
@@ -354,7 +361,10 @@ export function handleMarketListed(event: MarketListed): void {
   let cTokenContract = CToken.bind(event.params.cToken);
   let comptrollerAddr = cTokenContract.try_comptroller();
 
-  let protocol = getOrCreateProtocol(comptrollerAddr.value);
+  let protocol = getOrCreateProtocol(
+    comptrollerAddr.value,
+    event.block.timestamp
+  );
   if (!protocol) {
     // best effort
     log.warning("[handleMarketListed] Protocol not found: {}", [
@@ -405,10 +415,14 @@ export function handleMarketListed(event: MarketListed): void {
     getOrElse(cTokenContract.try_reserveFactorMantissa(), BIGINT_ZERO)
   );
 
-  let market = new Market(cToken.address.toHexString());
-
   _handleMarketListed(marketData, event);
-
+  let market = Market.load(cToken.address.toHexString());
+  if (!market) {
+    log.warning("[handleMarketListed] Market not found: {}", [
+      cToken.address.toHexString(),
+    ]);
+    return;
+  }
   // add market ID to the fuse pool
   let pool = MarketPool.load(event.address.toHexString());
   if (!pool) {
@@ -421,6 +435,8 @@ export function handleMarketListed(event: MarketListed): void {
   let markets = pool.marketIDs;
   markets.push(event.params.cToken.toHexString());
   pool.marketIDs = markets;
+
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 
   // set liquidation incentive (fuse-specific)
@@ -428,6 +444,7 @@ export function handleMarketListed(event: MarketListed): void {
   market.liquidationPenalty = pool.liquidationIncentive;
   market.poolId = pool.id;
 
+  market.updatedAt = event.block.timestamp;
   market.save();
 }
 
@@ -435,7 +452,11 @@ export function handleMarketListed(event: MarketListed): void {
 export function handleNewCollateralFactor(event: NewCollateralFactor): void {
   let marketID = event.params.cToken.toHexString();
   let newCollateralFactorMantissa = event.params.newCollateralFactorMantissa;
-  _handleNewCollateralFactor(marketID, newCollateralFactorMantissa);
+  _handleNewCollateralFactor(
+    marketID,
+    newCollateralFactorMantissa,
+    event.block.timestamp
+  );
 }
 
 export function handleNewLiquidationIncentive(
@@ -455,6 +476,7 @@ export function handleNewLiquidationIncentive(
     return;
   }
   pool.liquidationIncentive = liquidationIncentive;
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 
   for (let i = 0; i < pool.marketIDs.length; i++) {
@@ -467,6 +489,7 @@ export function handleNewLiquidationIncentive(
       continue;
     }
     market.liquidationPenalty = liquidationIncentive;
+    market.updatedAt = event.block.timestamp;
     market.save();
   }
 }
@@ -481,6 +504,7 @@ export function handleNewPriceOracle(event: NewPriceOracle): void {
     return;
   }
   pool.priceOracle = event.params.newPriceOracle.toHexString();
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 }
 
@@ -496,6 +520,7 @@ export function handleWhitelistEnforcementChanged(
     return;
   }
   pool.enforceWhitelist = event.params.enforce;
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 }
 
@@ -512,6 +537,7 @@ export function handleNewCloseFactor(event: NewCloseFactor): void {
     .toBigDecimal()
     .div(mantissaFactorBD)
     .times(BIGDECIMAL_HUNDRED);
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 }
 
@@ -525,6 +551,7 @@ export function handleNewPendingAdmin(event: NewPendingAdmin): void {
     return;
   }
   pool.pendingAdmin = event.params.newPendingAdmin.toHexString();
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 }
 
@@ -538,6 +565,7 @@ export function handleNewAdmin(event: NewAdmin): void {
     return;
   }
   pool.admin = event.params.newAdmin.toHexString();
+  pool.updatedAt = event.block.timestamp;
   pool.save();
 }
 
@@ -545,7 +573,7 @@ export function handleActionPaused(event: ActionPaused1): void {
   let marketID = event.params.cToken.toHexString();
   let action = event.params.action;
   let pauseState = event.params.pauseState;
-  _handleActionPaused(marketID, action, pauseState);
+  _handleActionPaused(marketID, action, pauseState, event.block.timestamp);
 }
 
 /////////////////////////
@@ -699,7 +727,6 @@ export function handleAccrueInterest(event: AccrueInterest): void {
     log.warning("[handleAccrueInterest] Market not found: {}", [marketID]);
     return;
   }
-
   let updateMarketData = new UpdateMarketData(
     cTokenContract.try_totalSupply(),
     cTokenContract.try_exchangeRateStored(),
@@ -741,7 +768,7 @@ export function handleAccrueInterest(event: AccrueInterest): void {
     blocksPerDayBD,
     false
   );
-  updateProtocol(trollerAddr);
+  updateProtocol(trollerAddr, event.block.timestamp);
 
   snapshotFinancials(trollerAddr, event.block.number, event.block.timestamp);
 }
@@ -753,6 +780,7 @@ export function handleNewFuseFee(event: NewFuseFee): void {
     .toBigDecimal()
     .div(mantissaFactorBD)
     .times(BIGDECIMAL_HUNDRED);
+  market.updatedAt = event.block.timestamp;
   market.save();
 }
 
@@ -763,13 +791,18 @@ export function handleNewAdminFee(event: NewAdminFee): void {
     .toBigDecimal()
     .div(mantissaFactorBD)
     .times(BIGDECIMAL_HUNDRED);
+  market.updatedAt = event.block.timestamp;
   market.save();
 }
 
 export function handleNewReserveFactor(event: NewReserveFactor): void {
   let marketID = event.address.toHexString();
   let newReserveFactorMantissa = event.params.newReserveFactorMantissa;
-  _handleNewReserveFactor(marketID, newReserveFactorMantissa);
+  _handleNewReserveFactor(
+    marketID,
+    newReserveFactorMantissa,
+    event.block.timestamp
+  );
 }
 
 /////////////////
@@ -827,7 +860,7 @@ function updateMarket(
   }
 
   if (updateMarketPrices) {
-    updateAllMarketPrices(comptroller, blockNumber);
+    updateAllMarketPrices(comptroller, blockNumber, blockTimestamp);
   }
 
   // update this market's price no matter what
@@ -984,13 +1017,13 @@ function updateMarket(
       marketID,
     ]);
   } else {
-    setSupplyInterestRate(
-      marketID,
-      convertRatePerUnitToAPY(
-        updateMarketData.supplyRateResult.value,
-        updateMarketData.unitPerYear
-      )
+    let supplyAPY = convertRatePerUnitToAPY(
+      updateMarketData.supplyRateResult.value,
+      updateMarketData.unitPerYear
     );
+    market.supplyAPY = supplyAPY;
+
+    setSupplyInterestRate(marketID, supplyAPY, blockTimestamp);
   }
 
   if (updateMarketData.borrowRateResult.reverted) {
@@ -998,13 +1031,13 @@ function updateMarket(
       marketID,
     ]);
   } else {
-    setBorrowInterestRate(
-      marketID,
-      convertRatePerUnitToAPY(
-        updateMarketData.borrowRateResult.value,
-        updateMarketData.unitPerYear
-      )
+    let borrowAPR = convertRatePerUnitToAPY(
+      updateMarketData.borrowRateResult.value,
+      updateMarketData.unitPerYear
     );
+    market.borrowAPR = borrowAPR;
+
+    setBorrowInterestRate(marketID, borrowAPR, blockTimestamp);
   }
 
   // update rewards
@@ -1037,6 +1070,9 @@ function updateMarket(
     market.cumulativeProtocolSideRevenueUSD.plus(protocolSideRevenueUSDDelta);
   market.cumulativeSupplySideRevenueUSD =
     market.cumulativeSupplySideRevenueUSD.plus(supplySideRevenueUSDDelta);
+
+  market.updatedAt = blockTimestamp;
+  pool.updatedAt = blockTimestamp;
 
   market.save();
   pool.save();
@@ -1082,9 +1118,10 @@ function updateRewards(
 
 function updateAllMarketPrices(
   comptrollerAddr: Address,
-  blockNumber: BigInt
+  blockNumber: BigInt,
+  blockTimestamp: BigInt
 ): void {
-  let protocol = getOrCreateProtocol(comptrollerAddr);
+  let protocol = getOrCreateProtocol(comptrollerAddr, blockTimestamp);
   if (!protocol) {
     log.warning("[updateAllMarketPrices] protocol not found: {}", [
       comptrollerAddr.toHexString(),
@@ -1182,12 +1219,18 @@ function updateAllMarketPrices(
       market.totalBorrowBalanceUSD
     );
 
+    market.updatedAt = blockTimestamp;
+    pool.updatedAt = blockTimestamp;
+
     pool.save();
     market.save();
   }
 }
 
-function getOrCreateProtocol(comptrollerAddr: Address): LendingProtocol {
+function getOrCreateProtocol(
+  comptrollerAddr: Address,
+  timestamp: BigInt
+): LendingProtocol {
   let comptroller = Comptroller.bind(comptrollerAddr);
   let marketPool = MarketPool.load(comptrollerAddr.toHexString())!;
 
@@ -1200,7 +1243,8 @@ function getOrCreateProtocol(comptrollerAddr: Address): LendingProtocol {
     METHODOLOGY_VERSION,
     PROTOCOL_NETWORK,
     comptroller.try_liquidationIncentiveMantissa(),
-    comptroller.try_oracle()
+    comptroller.try_oracle(),
+    timestamp
   );
 
   return _getOrCreateProtocol(protocolData);
